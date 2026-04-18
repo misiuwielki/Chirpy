@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/misiuwielki/Chirpy/internal/auth"
 	"github.com/misiuwielki/Chirpy/internal/database"
 )
 
@@ -101,6 +102,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 		UserID: parsedUID,
 	})
 	if err != nil {
+		log.Printf("Error while adding chirp to database: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create chirp")
 	}
 	chirpS := sqlToStructChirp(chirp)
@@ -110,6 +112,7 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
 	chirps, err := cfg.db.GetAllChirps(r.Context())
 	if err != nil {
+		log.Printf("Error while retrieving all chirps: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
 	}
 	jsonSlice := []Chirp{}
@@ -134,6 +137,7 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, r *http.Reque
 			respondWithError(w, http.StatusNotFound, "Chirp not found")
 			return
 		}
+		log.Printf("Error while retrieving a chirp: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't process finding chirp")
 		return
 	}
@@ -143,23 +147,61 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, r *http.Reque
 
 func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	prm := parameters{}
 	err := decodeJson(r, &prm)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
-		w.WriteHeader(http.StatusBadRequest)
+		respondWithError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	user, err := cfg.db.CreateUser(r.Context(), prm.Email)
-	User := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
+	hashed_password, err := auth.HashPassword(prm.Password)
+	if err != nil {
+		log.Printf("Error while hashing password: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create account")
+		return
 	}
-	respondWithJSON(w, http.StatusCreated, User)
+	user, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          prm.Email,
+		HashedPassword: hashed_password,
+	})
+	userS := sqlToStructUser(user)
+	respondWithJSON(w, http.StatusCreated, userS)
+}
+
+func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	prm := parameters{}
+	err := decodeJson(r, &prm)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	user, err := cfg.db.GetUser(r.Context(), prm.Email)
+	if err != nil {
+		log.Printf("Error on getting user from db: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	passwordCheck, err := auth.CheckPasswordHash(prm.Password, user.HashedPassword)
+	if err != nil {
+		log.Printf("Error on comparing password: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	if !passwordCheck {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	userS := sqlToStructUser(user)
+	respondWithJSON(w, 200, userS)
+
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -216,6 +258,15 @@ func sqlToStructChirp(chirp database.Chirp) Chirp {
 	}
 }
 
+func sqlToStructUser(user database.User) User {
+	return User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -236,6 +287,7 @@ func main() {
 	serveMux.HandleFunc("GET /api/chirps", cfg.handlerGetAllChirps)
 	serveMux.HandleFunc("GET /api/chirps/{chirpID}", cfg.handlerGetSingleChirp)
 	serveMux.HandleFunc("POST /api/users", cfg.handlerNewUser)
+	serveMux.HandleFunc("POST /api/login", cfg.handlerLogin)
 	server := http.Server{Addr: ":8080", Handler: serveMux}
 	server.ListenAndServe()
 }
