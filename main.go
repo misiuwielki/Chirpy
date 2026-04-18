@@ -30,6 +30,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits.Add(1)
@@ -66,28 +74,71 @@ func handlerReady(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func handlerPost(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body string `json:"body"`
+		Body   string `json:"body"`
+		UserID string `json:"user_id"`
 	}
 	prm := parameters{}
 	err := decodeJson(r, &prm)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
-		w.WriteHeader(500)
+		respondWithError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	if len(prm.Body) > 140 {
 		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
-	type validCh struct {
-		Valid       bool   `json:"valid"`
-		CleanedBody string `json:"cleaned_body"`
+	prm.Body = profanityCheck(prm.Body)
+	parsedUID, err := uuid.Parse(prm.UserID)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+		return
 	}
-	cleaned_body := profanityCheck(prm.Body)
-	vS := validCh{Valid: true, CleanedBody: cleaned_body}
-	respondWithJSON(w, http.StatusOK, vS)
+	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
+		Body:   prm.Body,
+		UserID: parsedUID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create chirp")
+	}
+	chirpS := sqlToStructChirp(chirp)
+	respondWithJSON(w, http.StatusCreated, chirpS)
+}
+
+func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.db.GetAllChirps(r.Context())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
+	}
+	jsonSlice := []Chirp{}
+	for _, chirp := range chirps {
+		chirpS := sqlToStructChirp(chirp)
+		jsonSlice = append(jsonSlice, chirpS)
+	}
+	respondWithJSON(w, http.StatusOK, jsonSlice)
+
+}
+
+func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, r *http.Request) {
+	chirpIDs := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDs)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid chirp ID")
+		return
+	}
+	chirp, err := cfg.db.GetSingleChirp(r.Context(), chirpID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondWithError(w, http.StatusNotFound, "Chirp not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process finding chirp")
+		return
+	}
+	chirpS := sqlToStructChirp(chirp)
+	respondWithJSON(w, http.StatusOK, chirpS)
 }
 
 func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +206,16 @@ func decodeJson(r *http.Request, dest any) error {
 	return decoder.Decode(dest)
 }
 
+func sqlToStructChirp(chirp database.Chirp) Chirp {
+	return Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -171,7 +232,9 @@ func main() {
 	serveMux.HandleFunc("GET /api/healthz", handlerReady)
 	serveMux.HandleFunc("GET /admin/metrics", cfg.middlewareMetricsRead)
 	serveMux.HandleFunc("POST /admin/reset", cfg.middlewareMetricsReset)
-	serveMux.HandleFunc("POST /api/validate_chirp", handlerPost)
+	serveMux.HandleFunc("POST /api/chirps", cfg.handlerPostChirp)
+	serveMux.HandleFunc("GET /api/chirps", cfg.handlerGetAllChirps)
+	serveMux.HandleFunc("GET /api/chirps/{chirpID}", cfg.handlerGetSingleChirp)
 	serveMux.HandleFunc("POST /api/users", cfg.handlerNewUser)
 	server := http.Server{Addr: ":8080", Handler: serveMux}
 	server.ListenAndServe()
