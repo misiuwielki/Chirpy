@@ -12,11 +12,12 @@ import (
 )
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 func handlerReady(w http.ResponseWriter, r *http.Request) {
@@ -53,9 +54,8 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	prm := parameters{}
 	err := decodeJson(r, &prm)
@@ -84,18 +84,25 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
 		return
 	}
-	expirationTime := time.Duration(prm.ExpiresInSeconds) * time.Second
-	if prm.ExpiresInSeconds > 3600 || prm.ExpiresInSeconds == 0 {
-		expirationTime = 3600 * time.Second
-	}
 	userS := sqlToStructUser(user)
-	token, err := auth.MakeJWT(userS.ID, cfg.secret, expirationTime)
+	aToken, err := auth.MakeJWT(userS.ID, cfg.secret, 1*time.Hour)
 	if err != nil {
 		log.Printf("Error on comparing password: %s", err)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate token")
 		return
 	}
-	userS.Token = token
+	rToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		log.Printf("Error on generating refreh token: %s", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't generate token")
+		return
+	}
+	cfg.db.AddRefreshToken(r.Context(), database.AddRefreshTokenParams{
+		Token:  rToken,
+		UserID: userS.ID,
+	})
+	userS.Token = aToken
+	userS.RefreshToken = rToken
 	respondWithJSON(w, 200, userS)
 
 }

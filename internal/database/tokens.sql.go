@@ -7,25 +7,63 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
-const getUserFromRefreshToken = `-- name: GetUserFromRefreshToken :one
-SELECT id, created_at, updated_at, email, hashed_password from users
-WHERE ID = (
-    SELECT user_id from refresh_tokens
-    WHERE token = $1
-)
+const addRefreshToken = `-- name: AddRefreshToken :exec
+INSERT into refresh_tokens (token, created_at, updated_at, user_id, expires_at, revoked_at)
+VALUES ($1, NOW(), NOW(), $2, (NOW() + INTERVAL '60 DAYS'), NULL)
 `
 
-func (q *Queries) GetUserFromRefreshToken(ctx context.Context, token string) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserFromRefreshToken, token)
-	var i User
+type AddRefreshTokenParams struct {
+	Token  string
+	UserID uuid.UUID
+}
+
+func (q *Queries) AddRefreshToken(ctx context.Context, arg AddRefreshTokenParams) error {
+	_, err := q.db.ExecContext(ctx, addRefreshToken, arg.Token, arg.UserID)
+	return err
+}
+
+const getRefrehToken = `-- name: GetRefrehToken :one
+SELECT token, created_at, updated_at, user_id, expires_at, revoked_at FROM refresh_tokens
+WHERE token = $1
+`
+
+func (q *Queries) GetRefrehToken(ctx context.Context, token string) (RefreshToken, error) {
+	row := q.db.QueryRowContext(ctx, getRefrehToken, token)
+	var i RefreshToken
 	err := row.Scan(
-		&i.ID,
+		&i.Token,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.Email,
-		&i.HashedPassword,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const getUserFromRefreshToken = `-- name: GetUserFromRefreshToken :one
+SELECT user_id from refresh_tokens
+WHERE token = $1 AND expires_at > NOW() AND revoked_at IS NULL
+`
+
+func (q *Queries) GetUserFromRefreshToken(ctx context.Context, token string) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, getUserFromRefreshToken, token)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
+const revokeRefreshToken = `-- name: RevokeRefreshToken :exec
+UPDATE refresh_tokens
+SET expires_at = NOW(), updated_at = NOW()
+WHERE token = $1
+`
+
+func (q *Queries) RevokeRefreshToken(ctx context.Context, token string) error {
+	_, err := q.db.ExecContext(ctx, revokeRefreshToken, token)
+	return err
 }

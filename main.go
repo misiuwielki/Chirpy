@@ -42,6 +42,8 @@ func main() {
 	serveMux.HandleFunc("GET /api/chirps/{chirpID}", cfg.handlerGetSingleChirp)
 	serveMux.HandleFunc("POST /api/users", cfg.handlerNewUser)
 	serveMux.HandleFunc("POST /api/login", cfg.handlerLogin)
+	serveMux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
+	serveMux.HandleFunc("POST /api/revoke", cfg.handlerRevokeRefreshToken)
 	server := http.Server{Addr: ":8080", Handler: serveMux}
 	server.ListenAndServe()
 }

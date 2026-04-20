@@ -47,6 +47,10 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uID, err := auth.ValidateJWT(tokenString, cfg.secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Authorization failed"))
+		return
+	}
 	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   prm.Body,
 		UserID: uID,
