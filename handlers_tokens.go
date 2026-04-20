@@ -43,7 +43,7 @@ func (cfg *apiConfig) handlerRevokeRefreshToken(w http.ResponseWriter, r *http.R
 	}
 	err = cfg.db.RevokeRefreshToken(r.Context(), rToken)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Database error"))
+		respondWithError(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	w.WriteHeader(204)
