@@ -2,14 +2,12 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/misiuwielki/Chirpy/internal/auth"
 	"github.com/misiuwielki/Chirpy/internal/database"
 )
 
@@ -22,6 +20,10 @@ type Chirp struct {
 }
 
 func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
+	uID := cfg.middlewareAuthenticate(w, r)
+	if uID == uuid.Nil {
+		return
+	}
 	type parameters struct {
 		Body string `json:"body"`
 	}
@@ -41,16 +43,6 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prm.Body = profanityCheck(prm.Body)
-	tokenString, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Error on header authorization: %v", err))
-		return
-	}
-	uID, err := auth.ValidateJWT(tokenString, cfg.secret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Authorization failed")
-		return
-	}
 	chirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   prm.Body,
 		UserID: uID,
@@ -98,6 +90,45 @@ func (cfg *apiConfig) handlerGetSingleChirp(w http.ResponseWriter, r *http.Reque
 	chirpS := sqlToStructChirp(chirp)
 	respondWithJSON(w, http.StatusOK, chirpS)
 }
+
+func (cfg *apiConfig) handlerDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	uID := cfg.middlewareAuthenticate(w, r)
+	if uID == uuid.Nil {
+		return
+	}
+	chirpIDs := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDs)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid chirp ID")
+		return
+	}
+	chirp, err := cfg.db.GetSingleChirp(r.Context(), chirpID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondWithError(w, http.StatusNotFound, "Chirp not found")
+			return
+		}
+		log.Printf("Error while retrieving a chirp: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process finding chirp")
+		return
+	}
+	if chirp.UserID != uID {
+		respondWithError(w, http.StatusForbidden, "Cannot delete a chirp of other user")
+		return
+	}
+	err = cfg.db.DeleteChirp(r.Context(), database.DeleteChirpParams{
+		ID:     chirpID,
+		UserID: uID,
+	})
+	if err != nil {
+		log.Printf("Error while deleting a chirp: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process deleting chirp")
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// helper functions
 
 func profanityCheck(chirp string) string {
 	words := strings.Split(chirp, " ")

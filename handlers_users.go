@@ -38,7 +38,7 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	hashed_password, err := auth.HashPassword(prm.Password)
+	hashedPassword, err := auth.HashPassword(prm.Password)
 	if err != nil {
 		log.Printf("Error while hashing password: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create account")
@@ -46,7 +46,7 @@ func (cfg *apiConfig) handlerNewUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
 		Email:          prm.Email,
-		HashedPassword: hashed_password,
+		HashedPassword: hashedPassword,
 	})
 	userS := sqlToStructUser(user)
 	respondWithJSON(w, http.StatusCreated, userS)
@@ -65,7 +65,7 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if prm.Email == "" || prm.Password == "" {
-		respondWithError(w, http.StatusBadRequest, "email and password are required")
+		respondWithError(w, http.StatusBadRequest, "Email and password are required")
 		return
 	}
 	user, err := cfg.db.GetUser(r.Context(), prm.Email)
@@ -104,5 +104,44 @@ func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
 	userS.Token = aToken
 	userS.RefreshToken = rToken
 	respondWithJSON(w, 200, userS)
+}
 
+func (cfg *apiConfig) handlerAlterUser(w http.ResponseWriter, r *http.Request) {
+	uID := cfg.middlewareAuthenticate(w, r)
+	if uID == uuid.Nil {
+		return
+	}
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	prm := parameters{}
+	err := decodeJson(r, &prm)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	if prm.Email == "" || prm.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "Email and password are required")
+		return
+	}
+	hashedPassword, err := auth.HashPassword(prm.Password)
+	if err != nil {
+		log.Printf("Error while hashing password: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't update account")
+		return
+	}
+	upUser, err := cfg.db.UpdateUser(r.Context(), database.UpdateUserParams{
+		ID:             uID,
+		Email:          prm.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		log.Printf("Error while updating user in database: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't update account")
+		return
+	}
+	User := sqlToStructUser(upUser)
+	respondWithJSON(w, http.StatusOK, User)
 }

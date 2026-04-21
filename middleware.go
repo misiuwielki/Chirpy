@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/google/uuid"
+	"github.com/misiuwielki/Chirpy/internal/auth"
 )
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -34,4 +37,18 @@ func (cfg *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (cfg *apiConfig) middlewareAuthenticate(w http.ResponseWriter, r *http.Request) (uID uuid.UUID) {
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Error on header authorization: %v", err))
+		return uuid.Nil
+	}
+	uID, err = auth.ValidateJWT(tokenString, cfg.secret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+		return uuid.Nil
+	}
+	return uID
 }
