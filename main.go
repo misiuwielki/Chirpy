@@ -17,6 +17,7 @@ type apiConfig struct {
 	db             *database.Queries
 	platform       string
 	secret         string
+	polka          string
 }
 
 func main() {
@@ -30,6 +31,7 @@ func main() {
 		db:       database.New(db),
 		platform: os.Getenv("PLATFORM"),
 		secret:   os.Getenv("SECRET"),
+		polka:    os.Getenv("POLKA_KEY"),
 	}
 	serveMux := http.NewServeMux()
 	handler := http.StripPrefix("/app", http.FileServer(http.Dir(".")))
@@ -46,6 +48,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", cfg.handlerLogin)
 	serveMux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
 	serveMux.HandleFunc("POST /api/revoke", cfg.handlerRevokeRefreshToken)
+	serveMux.HandleFunc("POST /api/polka/webhooks", cfg.handlerPolkaUpgrade)
 	server := http.Server{Addr: ":8080", Handler: serveMux}
 	server.ListenAndServe()
 }

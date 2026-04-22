@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,15 +57,31 @@ func (cfg *apiConfig) handlerPostChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlerGetAllChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.db.GetAllChirps(r.Context())
-	if err != nil {
-		log.Printf("Error while retrieving all chirps: %v", err)
-		respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
+	authorID := r.URL.Query().Get("author_id")
+	sortType := r.URL.Query().Get("sort")
+	chirps := []database.Chirp{}
+	var err error
+	if authorID == "" {
+		chirps, err = cfg.db.GetAllChirps(r.Context())
+		if err != nil {
+			log.Printf("Error while retrieving all chirps: %v", err)
+			respondWithError(w, http.StatusInternalServerError, "Couldn't get chirps")
+		}
+	} else {
+		uID, err := uuid.Parse(authorID)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid user ID")
+			return
+		}
+		chirps, err = cfg.db.GetChirpsByAuthor(r.Context(), uID)
 	}
 	jsonSlice := []Chirp{}
 	for _, chirp := range chirps {
 		chirpS := sqlToStructChirp(chirp)
 		jsonSlice = append(jsonSlice, chirpS)
+	}
+	if sortType == "desc" {
+		sort.Slice(jsonSlice, func(i, j int) bool { return jsonSlice[i].CreatedAt.After(jsonSlice[j].CreatedAt) })
 	}
 	respondWithJSON(w, http.StatusOK, jsonSlice)
 

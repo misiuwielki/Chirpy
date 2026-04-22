@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -18,6 +20,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 func handlerReady(w http.ResponseWriter, r *http.Request) {
@@ -144,4 +147,44 @@ func (cfg *apiConfig) handlerAlterUser(w http.ResponseWriter, r *http.Request) {
 	}
 	User := sqlToStructUser(upUser)
 	respondWithJSON(w, http.StatusOK, User)
+}
+
+func (cfg *apiConfig) handlerPolkaUpgrade(w http.ResponseWriter, r *http.Request) {
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, fmt.Sprintf("Error on authorisation: %v", err))
+		return
+	}
+	if apiKey != cfg.polka {
+		respondWithError(w, http.StatusUnauthorized, "Invalid API Key")
+		return
+	}
+	type paramters struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+	prm := paramters{}
+	err = decodeJson(r, &prm)
+	if err != nil {
+		log.Printf("Error decoding parameters from Polka: %s", err)
+		respondWithError(w, http.StatusBadRequest, "Request invalid")
+		return
+	}
+	if prm.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+	_, err = cfg.db.UpgradeUser(r.Context(), prm.Data.UserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			respondWithError(w, http.StatusNotFound, "User not found")
+			return
+		}
+		log.Printf("Error while upgrading user: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process upgrading user")
+		return
+	}
+	w.WriteHeader(204)
 }

@@ -63,21 +63,7 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 }
 
 func GetBearerToken(headers http.Header) (string, error) {
-	tokenHeader := headers.Get("Authorization")
-	if tokenHeader == "" {
-		return "", fmt.Errorf("Authorization header not found")
-	}
-	validHeader := strings.HasPrefix(tokenHeader, "Bearer")
-	if !validHeader {
-		return "", fmt.Errorf("Invalid authorization header")
-	}
-	tokenString := strings.TrimPrefix(tokenHeader, "Bearer ")
-	tokenString = strings.TrimSpace(tokenString)
-	if tokenString == "" {
-		return "", fmt.Errorf("Token not found")
-	}
-
-	return tokenString, nil
+	return ExtractFromAuthorisationHeader("Bearer", headers)
 }
 
 func MakeRefreshToken() (string, error) {
@@ -88,4 +74,25 @@ func MakeRefreshToken() (string, error) {
 	}
 	refreshToken := hex.EncodeToString(key)
 	return refreshToken, nil
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	return ExtractFromAuthorisationHeader("ApiKey", headers)
+}
+
+func ExtractFromAuthorisationHeader(keyType string, headers http.Header) (string, error) {
+	tokenHeader := headers.Get("Authorization")
+	if tokenHeader == "" {
+		return "", fmt.Errorf("Authorization header not found")
+	}
+	validHeader := strings.HasPrefix(tokenHeader, keyType)
+	if !validHeader {
+		return "", fmt.Errorf("Invalid authorization header")
+	}
+	tokenString := strings.TrimPrefix(tokenHeader, fmt.Sprintf("%s ", keyType))
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return "", fmt.Errorf("Token not found")
+	}
+	return tokenString, nil
 }
